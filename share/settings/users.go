@@ -1,14 +1,17 @@
 package settings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/jackc/pgx"
 	"github.com/jpillora/chisel/share/cio"
 )
 
@@ -94,6 +97,90 @@ func (u *UserIndex) LoadUsers(configFile string) error {
 		return err
 	}
 	return nil
+}
+
+func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
+	rows, err := conn.Query("SELECT username, password, addresses FROM users")
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		var username, password string
+		var addresses []string
+		if err := rows.Scan(&username, &password, &addresses); err != nil {
+			panic(err)
+		}
+		user := &User{Name: username, Pass: password}
+
+		for _, addr := range addresses {
+			re, err := regexp.Compile(addr)
+			if err != nil {
+				panic(err)
+			}
+			user.Addrs = append(user.Addrs, re)
+		}
+		users = append(users, user)
+	}
+
+	if err := rows.Err(); err != nil {
+		panic(err)
+	}
+
+	u.Reset(users)
+	return nil
+}
+
+func (u *UserIndex) LoadUsersFromDatabase(connString string) error {
+
+	connConfig, err := pgx.ParseURI(connString)
+	if err != nil {
+		panic(err)
+	}
+
+	conn, err := pgx.Connect(connConfig)
+	go listenForChanges(u, connString)
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+	return updateUsersData(u, conn)
+}
+
+func listenForChanges(u *UserIndex, connString string) {
+
+	connConfig, err := pgx.ParseURI(connString)
+	if err != nil {
+		panic(err)
+	}
+
+	conn, err := pgx.Connect(connConfig)
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	_, err = conn.Exec("LISTEN users_data_updates")
+	if err != nil {
+		log.Fatalf("Unable to execute LISTEN command: %v\n", err)
+	}
+
+	log.Println("Listening for user updates...")
+
+	for {
+		notification, err := conn.WaitForNotification(context.Background())
+		if err != nil {
+			log.Fatalf("Error waiting for notification: %v\n", err)
+		}
+
+		log.Printf("Received notification successfully: %s\n", notification.Payload)
+		err = updateUsersData(u, conn)
+		if err != nil {
+			log.Fatalf("Error in fetching the user data: %v\n", err)
+		}
+	}
 }
 
 // watchEvents is responsible for watching for updates to the file and reloading

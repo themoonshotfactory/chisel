@@ -26,6 +26,7 @@ type Config struct {
 	KeySeed   string
 	KeyFile   string
 	AuthFile  string
+	AuthDB    string
 	Auth      string
 	Proxy     string
 	Socks5    bool
@@ -63,12 +64,15 @@ func NewServer(c *Config) (*Server, error) {
 	}
 	server.Info = true
 	server.users = settings.NewUserIndex(server.Logger)
-	if c.AuthFile != "" {
+	if c.AuthDB != "" {
+		if err := server.users.LoadUsersFromDatabase(c.AuthDB); err != nil {
+			return nil, err
+		}
+	} else if c.AuthFile != "" {
 		if err := server.users.LoadUsers(c.AuthFile); err != nil {
 			return nil, err
 		}
-	}
-	if c.Auth != "" {
+	} else if c.Auth != "" {
 		u := &settings.User{Addrs: []*regexp.Regexp{settings.UserAllowAll}}
 		u.Name, u.Pass = settings.ParseAuth(c.Auth)
 		if u.Name != "" {
@@ -204,12 +208,14 @@ func (s *Server) authUser(c ssh.ConnMetadata, password []byte) (*ssh.Permissions
 	// check the user exists and has matching password
 	n := c.User()
 	user, found := s.users.Get(n)
+	// jsonData, err := json.Marshal(s)
 	if !found || user.Pass != string(password) {
 		s.Debugf("Login failed for user: %s", n)
 		return nil, errors.New("Invalid authentication for username: %s")
 	}
 	// insert the user session map
 	// TODO this should probably have a lock on it given the map isn't thread-safe
+	// fmt.Println("HERE!: ", found)
 	s.sessions.Set(string(c.SessionID()), user)
 	return nil, nil
 }
