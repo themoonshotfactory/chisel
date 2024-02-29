@@ -102,7 +102,8 @@ func (u *UserIndex) LoadUsers(configFile string) error {
 func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
 	rows, err := conn.Query("SELECT username, password, addresses FROM users")
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error in getting users data. Error: %v\n", err)
+		return err
 	}
 	defer rows.Close()
 
@@ -111,14 +112,16 @@ func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
 		var username, password string
 		var addresses []string
 		if err := rows.Scan(&username, &password, &addresses); err != nil {
-			panic(err)
+			log.Fatalf("Error in saning the data. Error: %v\n", err)
+			return err
 		}
 		user := &User{Name: username, Pass: password}
 
 		for _, addr := range addresses {
 			re, err := regexp.Compile(addr)
 			if err != nil {
-				panic(err)
+				log.Fatalf("Error in getting addr. Error: %v\n", err)
+				return err
 			}
 			user.Addrs = append(user.Addrs, re)
 		}
@@ -126,7 +129,8 @@ func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
 	}
 
 	if err := rows.Err(); err != nil {
-		panic(err)
+		log.Fatalf("Error: %v\n", err)
+		return err
 	}
 
 	u.Reset(users)
@@ -137,13 +141,15 @@ func (u *UserIndex) LoadUsersFromDatabase(connString string) error {
 
 	connConfig, err := pgx.ParseURI(connString)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error in Parsing the URI. Error: %v\n", err)
+		return err
 	}
 
 	conn, err := pgx.Connect(connConfig)
 	go listenForChanges(u, connString)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error in connecting to database. Error: %v\n", err)
+		return err
 	}
 	defer conn.Close()
 	return updateUsersData(u, conn)
@@ -153,12 +159,14 @@ func listenForChanges(u *UserIndex, connString string) {
 
 	connConfig, err := pgx.ParseURI(connString)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error in parding URI. Error: %v\n", err)
+		return
 	}
 
 	conn, err := pgx.Connect(connConfig)
 	if err != nil {
-		panic(err)
+		log.Fatalf("Error in connecting the database. Error: %v\n", err)
+		return
 	}
 	defer conn.Close()
 
