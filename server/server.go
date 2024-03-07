@@ -23,16 +23,17 @@ import (
 
 // Config is the configuration for the chisel service
 type Config struct {
-	KeySeed   string
-	KeyFile   string
-	AuthFile  string
-	AuthDB    string
-	Auth      string
-	Proxy     string
-	Socks5    bool
-	Reverse   bool
-	KeepAlive time.Duration
-	TLS       TLSConfig
+	KeySeed         string
+	KeyFile         string
+	AuthFile        string
+	AuthDB          string
+	AuthDbTableName string
+	Auth            string
+	Proxy           string
+	Socks5          bool
+	Reverse         bool
+	KeepAlive       time.Duration
+	TLS             TLSConfig
 }
 
 // Server respresent a chisel service
@@ -65,7 +66,12 @@ func NewServer(c *Config) (*Server, error) {
 	server.Info = true
 	server.users = settings.NewUserIndex(server.Logger)
 	if c.AuthDB != "" {
-		if err := server.users.LoadUsersFromDatabase(c.AuthDB); err != nil {
+		var tableNamePtr *string
+		if c.AuthDbTableName != "" {
+			tableNamePtr = &c.AuthDbTableName
+		}
+
+		if err := server.users.LoadUsersFromDatabase(c.AuthDB, tableNamePtr); err != nil {
 			return nil, err
 		}
 	} else if c.AuthFile != "" {

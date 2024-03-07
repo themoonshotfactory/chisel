@@ -99,8 +99,33 @@ func (u *UserIndex) LoadUsers(configFile string) error {
 	return nil
 }
 
-func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
-	rows, err := conn.Query("SELECT username, password, addresses FROM users")
+func columnExists(conn *pgx.Conn, tableName, columnName string) bool {
+	var exists bool
+	query := `SELECT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_name=$1 AND column_name=$2
+    )`
+	err := conn.QueryRow(query, tableName, columnName).Scan(&exists)
+	if err != nil {
+		log.Fatalf("Error checking if column exists: %v\n", err)
+		return false
+	}
+	return exists
+}
+
+func updateUsersData(u *UserIndex, conn *pgx.Conn, defaultTableName string) error {
+
+	addressesExists := columnExists(conn, defaultTableName, "addresses")
+
+	var query string
+	if addressesExists {
+		query = fmt.Sprintf("SELECT username, password, addresses FROM %s", defaultTableName)
+	} else {
+		query = fmt.Sprintf("SELECT username, password FROM %s", defaultTableName)
+	}
+
+	rows, err := conn.Query(query)
 	if err != nil {
 		log.Fatalf("Error in getting users data. Error: %v\n", err)
 		return err
@@ -111,20 +136,37 @@ func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
 	for rows.Next() {
 		var username, password string
 		var addresses []string
-		if err := rows.Scan(&username, &password, &addresses); err != nil {
-			log.Fatalf("Error in saning the data. Error: %v\n", err)
-			return err
-		}
-		user := &User{Name: username, Pass: password}
 
-		for _, addr := range addresses {
-			re, err := regexp.Compile(addr)
-			if err != nil {
-				log.Fatalf("Error in getting addr. Error: %v\n", err)
+		user := &User{}
+		if addressesExists {
+			if err := rows.Scan(&username, &password, &addresses); err != nil {
+				log.Fatalf("Error in scanning authentication data from database. Error: %v\n", err)
 				return err
 			}
-			user.Addrs = append(user.Addrs, re)
+
+			for _, addr := range addresses {
+				if addr == "" || addr == "*" {
+					user.Addrs = append(user.Addrs, UserAllowAll)
+				} else {
+					re, err := regexp.Compile(addr)
+					if err != nil {
+						log.Fatalf("Invalid address regex")
+						return err
+					}
+					user.Addrs = append(user.Addrs, re)
+				}
+			}
+
+		} else {
+			if err := rows.Scan(&username, &password); err != nil {
+				log.Fatalf("Error in scanning authentication data from database. Error: %v\n", err)
+				return err
+			}
+			user.Addrs = append(user.Addrs, UserAllowAll)
 		}
+
+		user.Name = username
+		user.Pass = password
 		users = append(users, user)
 	}
 
@@ -137,7 +179,17 @@ func updateUsersData(u *UserIndex, conn *pgx.Conn) error {
 	return nil
 }
 
-func (u *UserIndex) LoadUsersFromDatabase(connString string) error {
+func (u *UserIndex) LoadUsersFromDatabase(connString string, tableName *string) error {
+	defaultTableName := "users"
+
+	if tableName != nil {
+		match, err := regexp.MatchString(`^[a-zA-Z_][a-zA-Z0-9_]*$`, *tableName)
+		if err != nil || !match {
+			log.Fatalf("Invalid table name. Error: %v\n", err)
+			return fmt.Errorf("invalid table name: %s", defaultTableName)
+		}
+		defaultTableName = *tableName
+	}
 
 	connConfig, err := pgx.ParseURI(connString)
 	if err != nil {
@@ -146,20 +198,20 @@ func (u *UserIndex) LoadUsersFromDatabase(connString string) error {
 	}
 
 	conn, err := pgx.Connect(connConfig)
-	go listenForChanges(u, connString)
+	go listenForChanges(u, connString, defaultTableName)
 	if err != nil {
 		log.Fatalf("Error in connecting to database. Error: %v\n", err)
 		return err
 	}
 	defer conn.Close()
-	return updateUsersData(u, conn)
+	return updateUsersData(u, conn, defaultTableName)
 }
 
-func listenForChanges(u *UserIndex, connString string) {
+func listenForChanges(u *UserIndex, connString string, defaultTableName string) {
 
 	connConfig, err := pgx.ParseURI(connString)
 	if err != nil {
-		log.Fatalf("Error in parding URI. Error: %v\n", err)
+		log.Fatalf("Error in parsing authentication DB URI. Error: %v\n", err)
 		return
 	}
 
@@ -184,7 +236,7 @@ func listenForChanges(u *UserIndex, connString string) {
 		}
 
 		log.Printf("Received notification successfully: %s\n", notification.Payload)
-		err = updateUsersData(u, conn)
+		err = updateUsersData(u, conn, defaultTableName)
 		if err != nil {
 			log.Fatalf("Error in fetching the user data: %v\n", err)
 		}

@@ -185,6 +185,7 @@ func server(args []string) {
 	flags.StringVar(&config.KeyFile, "keyfile", "", "")
 	flags.StringVar(&config.AuthFile, "authfile", "", "")
 	flags.StringVar(&config.AuthDB, "authdb", "", "")
+	flags.StringVar(&config.AuthDbTableName, "authdbtablename", "", "")
 	flags.StringVar(&config.Auth, "auth", "", "")
 	flags.DurationVar(&config.KeepAlive, "keepalive", 25*time.Second, "")
 	flags.StringVar(&config.Proxy, "proxy", "", "")
